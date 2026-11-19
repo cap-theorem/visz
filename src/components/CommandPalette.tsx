@@ -31,7 +31,9 @@ export function CommandPalette({ open, onOpenChange, graph, actions, onPickNode 
   const { nodes, total } = useMemo(() => {
     if (!graph) return { nodes: [] as CollectorNode[], total: 0 }
     const degree = (id: string) => graph.adj.get(id)?.length ?? 0
-    const hits = [...graph.nodes.values()].filter((n) => !q || n.id.includes(q) || n.address.includes(q))
+    const matches = (n: CollectorNode) =>
+      n.id.includes(q) || n.address.includes(q) || !!n.service?.toLowerCase().includes(q) || !!n.instance?.toLowerCase().includes(q)
+    const hits = [...graph.nodes.values()].filter((n) => !q || matches(n))
     hits.sort((a, b) => RANK[a.state] - RANK[b.state] || degree(b.id) - degree(a.id))
     return { nodes: hits.slice(0, LIMIT), total: hits.length }
   }, [graph, q])
@@ -54,7 +56,7 @@ export function CommandPalette({ open, onOpenChange, graph, actions, onPickNode 
     >
       <div className="palette-input">
         <Search size={16} aria-hidden />
-        <Command.Input value={query} onValueChange={setQuery} placeholder="Search nodes by id or address, or run an action…" />
+        <Command.Input value={query} onValueChange={setQuery} placeholder="Search nodes by service, instance, id or address, or run an action…" />
         <kbd>esc</kbd>
       </div>
       <Command.List>
@@ -71,8 +73,8 @@ export function CommandPalette({ open, onOpenChange, graph, actions, onPickNode 
                 }}
               >
                 <StateDot state={n.state} component={n.component} />
-                <span className="mono">{n.id.slice(0, 8)}</span>
-                <span className="mono faint grow">{n.address}</span>
+                <span className="mono">{n.instance ?? n.id.slice(0, 8)}</span>
+                <span className="faint grow">{n.service ?? n.address}</span>
                 <span className="meta">{graph?.adj.get(n.id)?.length ?? 0} links</span>
               </Command.Item>
             ))}

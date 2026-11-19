@@ -5,13 +5,20 @@ A live view of a spectral overlay. visz follows the topology collector
 and draws the overlay as it changes:
 
 - **Joins:** nodes pop in blue and their new links flash.
-- **Crashes:** nodes the collector presumes dead (orphaned) turn red and fade
-  until the collector drops them.
+- **Crashes:** nodes the collector presumes dead (orphaned) flash red, then
+  fade out after 4 seconds. The collector keeps them for its `--stale-after`
+  (90 s by default) and still counts them as orphaned; if one comes back, it
+  reappears.
 - **Leaves:** nodes that leave fade away.
 - **Messages:** each message a node sends runs from sender to receiver as a
   coloured comet (bright head, fading tail), so you can see who sent it to
   whom. The legend at the bottom right shows each kind's rate and turns it on
   or off.
+
+Nodes are labelled with the service their spctrld has registered, or a short
+node id if none. Zoomed in further, the service instance's own id (such as
+`ord-9869`, whatever the service sent as `instance_id` when it registered)
+shows above each node. Small graphs, or `L`, label every node at any zoom.
 
 A side panel tracks nodes, links, degree, components and the spectral gap λ₂,
 with its recent history.
@@ -37,7 +44,7 @@ Controls:
 | input | does |
 |---|---|
 | click a node | opens it in the inspector, with its neighbours |
-| ⌘K or `/` | searches nodes by id or address, and runs actions |
+| ⌘K or `/` | searches nodes by service, instance, id or address, and runs actions |
 | scroll | pans; pinch or ⌘-scroll zooms |
 | drag | pans, or moves a node |
 | double-click | zooms to a node, or fits the graph |
@@ -58,7 +65,7 @@ checkout, then runs them on loopback:
 ```bash
 scripts/dev-cluster.sh up 12    # the collector on :8100 and 12 nodes, one per second
 scripts/dev-cluster.sh add 5    # five more joins
-scripts/dev-cluster.sh kill 2   # SIGKILL: orphaned within seconds, dropped after the collector's --stale-after (90 s)
+scripts/dev-cluster.sh kill 2   # SIGKILL: orphaned within seconds, gone from the view 4 s later
 scripts/dev-cluster.sh stop 1   # SIGTERM: the node reports that it left and fades out
 scripts/dev-cluster.sh down
 ```

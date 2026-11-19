@@ -54,6 +54,7 @@ export const css = (c: RGB) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`
 const WHITE: RGB = [255, 255, 255]
 const GRAY: RGB = [161, 161, 161]
 const LABEL_FONT = '500 10px "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace'
+const INSTANCE_FONT = '500 9px "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace'
 
 const JOIN_MS = 3000 // a new node glows blue this long
 const POP_MS = 650
@@ -62,12 +63,14 @@ const FLASH_MS = 900 // a new link flashes
 const BLEND_MS = 600 // colour change after a state change
 const EDGE_FADE_MS = 700
 const GONE_MS = 1200 // a node that left shrinks and fades
-const ORPHAN_DIM_MS = 20_000
+const ORPHAN_HIDE_MS = 4000 // an orphan shows red this long, then fades; the collector keeps it for ~90 s
 const TICK_MS = 1000 / 60
 const LINK_DISTANCE = 32
 const PAD = 96 // screen pixels kept around the graph, less on small screens
 const COLLIDE_UP_TO = 1500 // past this many nodes, collisions cost too much per frame
 const AUTO_LABELS_UP_TO = 30
+const LABEL_ZOOM = 1.2 // zoomed in this far, every node is labelled
+const INSTANCE_ZOOM = 2.8 // and this far (about 90 px between linked nodes), labelled nodes show their instance id above
 const PULSE_MS = 700 // a message travels from sender to receiver this long
 const PULSE_SPREAD_MS = 250 // a node counts messages over 250 ms, so its batch is spread back out over that
 const PULSE_TAIL = 0.35 // of the line, behind the head
@@ -79,6 +82,9 @@ const MAX_ZOOM = 8
 export interface SceneNode extends SimulationNodeDatum {
   id: string
   address: string
+  /** Empty when no service is registered. */
+  service: string
+  instance: string
   state: NodeState
   component: number
   degree: number
@@ -143,6 +149,7 @@ export class Scene {
   private allLabels = false
   private pulses: Pulse[] = []
   private families = new Set<FlowFamily>()
+  private listed = new Set<string>()
 
   constructor() {
     this.links = forceLink<SceneNode, SceneEdge>().distance(LINK_DISTANCE)
@@ -173,7 +180,7 @@ export class Scene {
         if (!first) events.push({ kind: 'join', id: n.id, text: `joined from ${n.address}` })
         continue
       }
-      if (v.gone) {
+      if (v.gone && !(v.state === 'orphaned' && n.state === 'orphaned')) {
         v.gone = 0
         moved = true
       }
@@ -185,9 +192,12 @@ export class Scene {
         restyled = true
       }
       v.address = n.address
+      v.service = n.service ?? ''
+      v.instance = n.instance ?? ''
       v.state = n.state
       v.component = n.component
     }
+    this.listed = new Set(g.nodes.keys())
     for (const v of this.nodes.values()) {
       if (v.gone || g.nodes.has(v.id)) continue
       v.gone = now
@@ -222,15 +232,19 @@ export class Scene {
     this.parts = parts
 
     if (moved || restyled) {
-      // Setting the nodes again also re-reads each node's pull and collision size.
-      const live = [...this.nodes.values()].filter((v) => !v.gone)
-      this.sim.force('collide', live.length <= COLLIDE_UP_TO ? this.collide : null)
-      this.sim.nodes(live)
-      this.links.links([...this.edges.values()].filter((e) => !e.gone && !e.source.gone && !e.target.gone))
-      this.sim.alpha(Math.max(this.sim.alpha(), first ? 1 : moved ? 0.25 : 0.1))
+      this.relayout(first ? 1 : moved ? 0.25 : 0.1)
       if (first) this.sim.tick(Math.round(clamp(60_000 / Math.max(g.nodes.size, 1), 20, 300)))
     }
     return events
+  }
+
+  /** Hands the simulation the nodes and links still drawn; this also re-reads each node's pull and collision size. */
+  private relayout(alpha: number) {
+    const live = [...this.nodes.values()].filter((v) => !v.gone)
+    this.sim.force('collide', live.length <= COLLIDE_UP_TO ? this.collide : null)
+    this.sim.nodes(live)
+    this.links.links([...this.edges.values()].filter((e) => !e.gone && !e.source.gone && !e.target.gone))
+    this.sim.alpha(Math.max(this.sim.alpha(), alpha))
   }
 
   /** Advances the layout and camera to time now (performance.now()). */
@@ -250,7 +264,18 @@ export class Scene {
     }
     const ease = 1 - Math.exp(-dt / 400)
     for (const v of this.nodes.values()) v.size += (v.degree - v.size) * ease
-    for (const [id, v] of this.nodes) if (v.gone && now - v.gone > GONE_MS) this.nodes.delete(id)
+    // An orphan fades out long before the collector drops it; it stays here, hidden, until then.
+    let hid = false
+    for (const v of this.nodes.values()) {
+      if (v.state === 'orphaned' && !v.gone && now - v.changed > ORPHAN_HIDE_MS) {
+        v.gone = now
+        hid = true
+      }
+    }
+    if (hid) this.relayout(0.1)
+    for (const [id, v] of this.nodes) {
+      if (v.gone && now - v.gone > GONE_MS && !(v.state === 'orphaned' && this.listed.has(id))) this.nodes.delete(id)
+    }
     for (const [key, e] of this.edges) if (e.gone && now - e.gone > EDGE_FADE_MS) this.edges.delete(key)
     if (this.pulses.length) this.pulses = this.pulses.filter((p) => now - p.start < PULSE_MS + ARRIVE_MS)
     this.moveCamera(dt)
@@ -426,9 +451,9 @@ export class Scene {
 
     this.drawPulses(ctx, now, selected)
 
-    ctx.font = LABEL_FONT
     ctx.textAlign = 'center'
-    const autoLabels = this.allLabels || this.nodes.size <= AUTO_LABELS_UP_TO
+    const autoLabels = this.allLabels || this.nodes.size <= AUTO_LABELS_UP_TO || this.cam.k >= LABEL_ZOOM
+    const instances = this.cam.k >= INSTANCE_ZOOM
     for (const v of this.nodes.values()) {
       const x = sx(v.x)
       const y = sy(v.y)
@@ -440,7 +465,6 @@ export class Scene {
 
       const lit = v === selected || v === hover || near.has(v) || hoverNear.has(v)
       let a = v.gone ? size : 1
-      if (v.state === 'orphaned') a *= 1 - 0.6 * clamp((now - v.changed) / ORPHAN_DIM_MS, 0, 1)
       if (selected && !lit) a *= 0.25
       const c = colorOf(v, now)
 
@@ -467,8 +491,15 @@ export class Scene {
       }
       const label = v === selected || v === hover || (selected ? near.has(v) : autoLabels)
       if (label && !v.gone) {
-        ctx.fillStyle = rgba(v === selected || v === hover ? WHITE : GRAY, 0.85 * a)
-        ctx.fillText(v.id.slice(0, 6), x, y + r + 14)
+        const focused = v === selected || v === hover
+        ctx.font = LABEL_FONT
+        ctx.fillStyle = rgba(focused ? WHITE : GRAY, 0.85 * a)
+        ctx.fillText(v.service || v.id.slice(0, 6), x, y + r + 14)
+        if (v.instance && (instances || focused)) {
+          ctx.font = INSTANCE_FONT
+          ctx.fillStyle = rgba(focused ? WHITE : GRAY, 0.6 * a)
+          ctx.fillText(v.instance, x, y - r - 7)
+        }
       }
     }
 
@@ -570,6 +601,8 @@ export class Scene {
     return {
       id: n.id,
       address: n.address,
+      service: n.service ?? '',
+      instance: n.instance ?? '',
       state: n.state,
       component: n.component,
       degree,

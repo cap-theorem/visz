@@ -191,7 +191,8 @@ export function GraphCanvas({ scene, graph, camera, selected, highlight, onSelec
           }}
         >
           <StateDot state={node.state} component={node.component} />
-          <span className="mono strong">{node.id.slice(0, 8)}</span>
+          <span className="mono strong">{node.service ?? node.id.slice(0, 8)}</span>
+          {node.instance && <span className="mono faint">{node.instance}</span>}
           <span className="faint">{node.address}</span>
           <span className="faint">· {graph.adj.get(node.id)?.length ?? 0} links</span>
         </div>
