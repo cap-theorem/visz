@@ -16,7 +16,7 @@ import {
   type SimulationLinkDatum,
   type SimulationNodeDatum,
 } from 'd3-force'
-import type { CollectorNode, Graph, NodeState } from './collector'
+import { familyOf, type CollectorNode, type FlowEvent, type FlowFamily, type Graph, type NodeState } from './collector'
 
 export type RGB = readonly [number, number, number]
 
@@ -35,6 +35,20 @@ export const PALETTE = {
     [102, 212, 207], // systemMint
   ] as RGB[],
 }
+/** One colour per message family, so a pulse says what kind of message went where. */
+export const FLOW_COLORS: Record<FlowFamily, RGB> = {
+  overlay: [191, 90, 242], // systemPurple: link, link_ack, unlink
+  gossip: [255, 214, 10], // systemYellow: update and anti-entropy
+  probe: [100, 210, 255], // systemCyan: ping, pong, ping_req, ping_req_ack
+  heartbeat: [48, 209, 88], // systemGreen
+}
+export const FLOW_LABELS: Record<FlowFamily, string> = {
+  overlay: 'Links',
+  gossip: 'Gossip',
+  probe: 'Probes',
+  heartbeat: 'Heartbeats',
+}
+
 export const css = (c: RGB) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`
 
 const WHITE: RGB = [255, 255, 255]
@@ -54,6 +68,11 @@ const LINK_DISTANCE = 32
 const PAD = 96 // screen pixels kept around the graph, less on small screens
 const COLLIDE_UP_TO = 1500 // past this many nodes, collisions cost too much per frame
 const AUTO_LABELS_UP_TO = 30
+const PULSE_MS = 700 // a message travels from sender to receiver this long
+const PULSE_SPREAD_MS = 250 // a node counts messages over 250 ms, so its batch is spread back out over that
+const PULSE_TAIL = 0.35 // of the line, behind the head
+const ARRIVE_MS = 260
+const MAX_PULSES = 2500
 const MIN_ZOOM = 0.05
 const MAX_ZOOM = 8
 
@@ -73,6 +92,14 @@ export interface SceneNode extends SimulationNodeDatum {
   changed: number
   from: RGB
   phase: number
+}
+
+interface Pulse {
+  from: SceneNode
+  to: SceneNode
+  family: FlowFamily
+  count: number
+  start: number
 }
 
 interface SceneEdge extends SimulationLinkDatum<SceneNode> {
@@ -114,6 +141,8 @@ export class Scene {
   private lag = 0
   private drift = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 0.03
   private allLabels = false
+  private pulses: Pulse[] = []
+  private families = new Set<FlowFamily>()
 
   constructor() {
     this.links = forceLink<SceneNode, SceneEdge>().distance(LINK_DISTANCE)
@@ -223,7 +252,27 @@ export class Scene {
     for (const v of this.nodes.values()) v.size += (v.degree - v.size) * ease
     for (const [id, v] of this.nodes) if (v.gone && now - v.gone > GONE_MS) this.nodes.delete(id)
     for (const [key, e] of this.edges) if (e.gone && now - e.gone > EDGE_FADE_MS) this.edges.delete(key)
+    if (this.pulses.length) this.pulses = this.pulses.filter((p) => now - p.start < PULSE_MS + ARRIVE_MS)
     this.moveCamera(dt)
+  }
+
+  /** Starts a pulse from sender to receiver for each flow in a family being shown. */
+  pulse(flows: FlowEvent[], now: number) {
+    for (const f of flows) {
+      if (this.pulses.length >= MAX_PULSES) return
+      const family = familyOf(f.kind)
+      if (!this.families.has(family)) continue
+      const from = this.nodes.get(f.from)
+      const to = this.nodes.get(f.to)
+      if (!from || !to || from.gone || to.gone) continue
+      this.pulses.push({ from, to, family, count: f.count, start: now + Math.random() * PULSE_SPREAD_MS })
+    }
+  }
+
+  /** The message families drawn as pulses; the rest are ignored as they arrive. */
+  showFlows(families: Iterable<FlowFamily>) {
+    this.families = new Set(families)
+    this.pulses = this.pulses.filter((p) => this.families.has(p.family))
   }
 
   /** Labels every node, not only small graphs and the focused ones. */
@@ -375,6 +424,8 @@ export class Scene {
       ctx.stroke()
     }
 
+    this.drawPulses(ctx, now, selected)
+
     ctx.font = LABEL_FONT
     ctx.textAlign = 'center'
     const autoLabels = this.allLabels || this.nodes.size <= AUTO_LABELS_UP_TO
@@ -427,6 +478,57 @@ export class Scene {
     vignette.addColorStop(1, 'rgba(0, 0, 0, 0.55)')
     ctx.fillStyle = vignette
     ctx.fillRect(0, 0, w, h)
+  }
+
+  /**
+   * Each message is a comet running from sender to receiver: a bright head with
+   * a fading tail behind it, so the direction reads at a glance, then a small
+   * ring where it lands. With a node selected, only its own messages stay bright.
+   */
+  private drawPulses(ctx: CanvasRenderingContext2D, now: number, selected?: SceneNode) {
+    if (!this.pulses.length) return
+    const zoom = this.zoom()
+    ctx.lineCap = 'round'
+    for (const p of this.pulses) {
+      const t = (now - p.start) / PULSE_MS
+      if (t < 0) continue
+      const x0 = this.sx(p.from.x)
+      const y0 = this.sy(p.from.y)
+      const x1 = this.sx(p.to.x)
+      const y1 = this.sy(p.to.y)
+      const c = FLOW_COLORS[p.family]
+      const dim = selected && p.from !== selected && p.to !== selected ? 0.15 : 1
+      const weight = 1 + Math.log2(1 + p.count) * 0.5
+
+      if (t <= 1) {
+        const head = easeInOut(t)
+        const tail = Math.max(0, head - PULSE_TAIL)
+        const hx = x0 + (x1 - x0) * head
+        const hy = y0 + (y1 - y0) * head
+        const tx = x0 + (x1 - x0) * tail
+        const ty = y0 + (y1 - y0) * tail
+        ctx.strokeStyle = rgba(c, 0.12 * dim)
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.moveTo(x0, y0)
+        ctx.lineTo(x1, y1)
+        ctx.stroke()
+        const grad = ctx.createLinearGradient(tx, ty, hx, hy)
+        grad.addColorStop(0, rgba(c, 0))
+        grad.addColorStop(1, rgba(c, 0.9 * dim))
+        ctx.strokeStyle = grad
+        ctx.lineWidth = 1.6 * weight * zoom
+        ctx.beginPath()
+        ctx.moveTo(tx, ty)
+        ctx.lineTo(hx, hy)
+        ctx.stroke()
+        circle(ctx, hx, hy, 1.8 * weight * zoom, rgba(mix(c, WHITE, 0.4), dim))
+      } else {
+        const a = (now - p.start - PULSE_MS) / ARRIVE_MS
+        ring(ctx, x1, y1, radius(p.to.size) * zoom + 2 + a * 8, rgba(c, (1 - a) * 0.8 * dim), 1.2)
+      }
+    }
+    ctx.lineCap = 'butt'
   }
 
   /** A dot grid that moves and scales with the camera, about 24 to 48 px apart. */
@@ -574,6 +676,7 @@ const radius = (degree: number) => 3.5 + 2.2 * Math.sqrt(degree)
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x))
 const mix = (a: RGB, b: RGB, t: number): RGB => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]
 const rgba = (c: RGB, a: number) => `rgba(${c[0] | 0}, ${c[1] | 0}, ${c[2] | 0}, ${Math.max(0, a).toFixed(3)})`
+const easeInOut = (t: number) => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2)
 const easeOutBack = (t: number) => 1 + 2.70158 * (t - 1) ** 3 + 1.70158 * (t - 1) ** 2
 
 function circle(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, fill: string) {

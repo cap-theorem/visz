@@ -1,8 +1,23 @@
-import { apiUrl, applyDelta, fromSnapshot, type Delta, type Graph, type Snapshot, type Summary } from './collector'
+import {
+  apiUrl,
+  applyDelta,
+  familyOf,
+  fromSnapshot,
+  type Delta,
+  type FlowBatch,
+  type FlowFamily,
+  type Graph,
+  type Snapshot,
+  type Summary,
+} from './collector'
 import { Scene, type SceneEvent } from './scene'
 
 /** unreachable: no graph yet and the last attempt failed. */
 export type Status = 'connecting' | 'live' | 'reconnecting' | 'unreachable'
+
+/** Messages per second in each family, over the last second. */
+export type FlowRates = Record<FlowFamily, number>
+const NO_FLOWS: FlowRates = { overlay: 0, gossip: 0, probe: 0, heartbeat: 0 }
 
 export interface LogEntry extends SceneEvent {
   seq: number
@@ -23,11 +38,14 @@ export interface LiveState {
   gaps: GapSample[]
   /** Date.now() of the last graph change; 0 before the first. */
   updatedAt: number
+  /** Null until the collector sends a flow, e.g. when it predates /v1/flows/stream. */
+  flowRates: FlowRates | null
 }
 
 export const GAP_HISTORY_MS = 5 * 60_000
 const LOG_SIZE = 60
 const SUMMARY_EVERY_MS = 2000
+const RATE_EVERY_MS = 1000
 
 /**
  * Follows one collector's graph stream: keeps the latest graph, feeds each one
@@ -36,9 +54,15 @@ const SUMMARY_EVERY_MS = 2000
  */
 export class LiveGraph {
   readonly scene = new Scene()
-  private state: LiveState = { status: 'connecting', graph: null, summary: null, log: [], gaps: [], updatedAt: 0 }
+  private state: LiveState = { status: 'connecting', graph: null, summary: null, log: [], gaps: [], updatedAt: 0, flowRates: null }
   private listeners = new Set<() => void>()
   private source: EventSource | null = null
+  private flowSource: EventSource | null = null
+  private flowRetry = 0
+  private flowBackoff = 1000
+  private flowCounts: FlowRates = { ...NO_FLOWS }
+  private sawFlows = false
+  private rateTimer = 0
   private run: AbortController | null = null
   private retry = 0
   private backoff = 1000
@@ -62,6 +86,8 @@ export class LiveGraph {
     this.stop()
     this.run = new AbortController()
     this.connect()
+    this.connectFlows()
+    this.rateTimer = window.setInterval(() => this.publishRates(), RATE_EVERY_MS)
     void this.pollSummary(this.run.signal)
   }
 
@@ -71,6 +97,10 @@ export class LiveGraph {
     this.source?.close()
     this.source = null
     window.clearTimeout(this.retry)
+    this.flowSource?.close()
+    this.flowSource = null
+    window.clearTimeout(this.flowRetry)
+    window.clearInterval(this.rateTimer)
   }
 
   private connect() {
@@ -93,6 +123,37 @@ export class LiveGraph {
         this.backoff = Math.min(this.backoff * 2, 10_000)
       }
     }
+  }
+
+  private connectFlows() {
+    this.flowSource?.close()
+    window.clearTimeout(this.flowRetry)
+    const source = new EventSource(apiUrl(this.url, '/v1/flows/stream'))
+    this.flowSource = source
+    source.addEventListener('flows', (e) => this.onFlows(JSON.parse(e.data) as FlowBatch))
+    source.onopen = () => {
+      this.flowBackoff = 1000
+    }
+    source.onerror = () => {
+      if (this.flowSource !== source || source.readyState !== EventSource.CLOSED) return
+      // An older collector answers 404; keep trying slowly in case it is upgraded.
+      this.flowRetry = window.setTimeout(() => this.connectFlows(), this.flowBackoff)
+      this.flowBackoff = Math.min(this.flowBackoff * 2, 30_000)
+    }
+  }
+
+  private onFlows(b: FlowBatch) {
+    this.sawFlows = true
+    for (const f of b.flows) this.flowCounts[familyOf(f.kind)] += f.count
+    this.scene.pulse(b.flows, performance.now())
+  }
+
+  private publishRates() {
+    if (!this.sawFlows) return
+    const rates = { ...this.flowCounts }
+    for (const k of Object.keys(rates) as FlowFamily[]) rates[k] = (rates[k] * 1000) / RATE_EVERY_MS
+    this.flowCounts = { ...NO_FLOWS }
+    this.set({ flowRates: rates })
   }
 
   private onSnapshot(s: Snapshot) {

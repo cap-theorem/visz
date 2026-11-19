@@ -971,6 +971,72 @@ kbd {
   background: var(--line);
 }
 
+.flows {
+  position: absolute;
+  right: 68px;
+  bottom: 16px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.flows-title {
+  padding: 4px 8px 2px;
+  color: var(--fg-3);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.flow-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-3);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+
+.flow-chip:hover {
+  background: var(--fill-2);
+}
+
+.flow-chip.on {
+  color: var(--fg);
+}
+
+.flow-chip .mono {
+  margin-left: auto;
+  min-width: 38px;
+  text-align: right;
+  font-size: 11px;
+}
+
+.flow-swatch {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  opacity: 0.3;
+  transition: opacity 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+.flow-chip.on .flow-swatch {
+  opacity: 1;
+  box-shadow: 0 0 8px currentColor;
+}
+
 .recenter {
   position: absolute;
   bottom: 20px;
@@ -1373,7 +1439,8 @@ kbd {
     display: none;
   }
 
-  .feed {
+  .feed,
+  .flows {
     display: none;
   }
 

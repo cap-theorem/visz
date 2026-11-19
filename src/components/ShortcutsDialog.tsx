@@ -19,6 +19,7 @@ const GROUPS: [string, [string[], string][]][] = [
       [['F'], 'Fit the whole graph'],
       [['+', '−'], 'Zoom in and out'],
       [['L'], 'Label every node'],
+      [['M'], 'Show or hide messages'],
     ],
   ],
   [
