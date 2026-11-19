@@ -1,21 +1,25 @@
-import { Copy, Keyboard, Maximize2, Minus, Plus, PlugZap, Tag } from 'lucide-react'
+import { Activity, Copy, Keyboard, Maximize2, Minus, Plus, PlugZap, Tag } from 'lucide-react'
 import { AnimatePresence } from 'motion/react'
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { ActivityFeed } from './components/ActivityFeed'
 import { CanvasControls } from './components/CanvasControls'
 import { CommandPalette, type PaletteAction } from './components/CommandPalette'
 import { EmptyState } from './components/EmptyState'
+import { FlowLegend } from './components/FlowLegend'
 import { type Camera, GraphCanvas } from './components/GraphCanvas'
 import { Inspector } from './components/Inspector'
 import { MetricsCard } from './components/MetricsCard'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { TopBar } from './components/TopBar'
+import { FLOW_FAMILIES, type FlowFamily } from './collector'
 import { isTyping } from './lib'
 import { LiveGraph } from './live'
 
 const DEFAULT_COLLECTOR: string = import.meta.env.VITE_COLLECTOR_URL ?? 'http://localhost:8100'
 const STORAGE_KEY = 'visz.collector'
 const ZOOM_STEP = 1.4
+// Every link sends a heartbeat each way every 500 ms, which would light up the whole graph.
+const DEFAULT_FLOWS: FlowFamily[] = ['overlay', 'gossip', 'probe']
 
 function initialCollector() {
   const fromQuery = new URLSearchParams(window.location.search).get('collector')
@@ -57,13 +61,22 @@ function Overlay({ collector, onCollectorChange }: OverlayProps) {
     live.start()
     return () => live.stop()
   }, [live])
-  const { status, graph, summary, log, gaps, updatedAt } = useSyncExternalStore(live.subscribe, live.getState)
+  const { status, graph, summary, log, gaps, updatedAt, flowRates } = useSyncExternalStore(live.subscribe, live.getState)
   const scene = live.scene
 
   const [selected, setSelected] = useState<string | null>(null)
   const [highlight, setHighlight] = useState<string | null>(null)
   const [following, setFollowing] = useState(true)
   const [labels, setLabels] = useState(false)
+  const [flows, setFlows] = useState(() => new Set(DEFAULT_FLOWS))
+  const toggleFlow = (f: FlowFamily) =>
+    setFlows((on) => {
+      const next = new Set(on)
+      if (next.has(f)) next.delete(f)
+      else next.add(f)
+      return next
+    })
+  const toggleAllFlows = () => setFlows((on) => (on.size ? new Set() : new Set(DEFAULT_FLOWS)))
   const [palette, setPalette] = useState(false)
   const [help, setHelp] = useState(false)
   const [connection, setConnection] = useState(false)
@@ -93,6 +106,10 @@ function Overlay({ collector, onCollectorChange }: OverlayProps) {
   useEffect(() => {
     scene.showAllLabels(labels)
   }, [scene, labels])
+
+  useEffect(() => {
+    scene.showFlows(flows)
+  }, [scene, flows])
 
   const node = selected ? graph?.nodes.get(selected) : undefined
   const pickNode = (id: string) => {
@@ -134,6 +151,10 @@ function Overlay({ collector, onCollectorChange }: OverlayProps) {
         case 'L':
           setLabels((on) => !on)
           break
+        case 'm':
+        case 'M':
+          toggleAllFlows()
+          break
         case '?':
           setHelp((open) => !open)
           break
@@ -154,6 +175,19 @@ function Overlay({ collector, onCollectorChange }: OverlayProps) {
       shortcut: 'L',
       run: () => setLabels((on) => !on),
     },
+    {
+      id: 'flows',
+      label: flows.size ? 'Hide messages' : 'Show messages',
+      icon: <Activity size={15} />,
+      shortcut: 'M',
+      run: toggleAllFlows,
+    },
+    ...FLOW_FAMILIES.map((f) => ({
+      id: `flows-${f}`,
+      label: `${flows.has(f) ? 'Hide' : 'Show'} ${f} messages`,
+      icon: <Activity size={15} />,
+      run: () => toggleFlow(f),
+    })),
     { id: 'collector', label: 'Change collector…', icon: <PlugZap size={15} />, run: () => setConnection(true) },
     { id: 'copy', label: 'Copy collector URL', icon: <Copy size={15} />, run: () => navigator.clipboard.writeText(collector) },
     { id: 'help', label: 'Keyboard shortcuts', icon: <Keyboard size={15} />, shortcut: '?', run: () => setHelp(true) },
@@ -195,6 +229,7 @@ function Overlay({ collector, onCollectorChange }: OverlayProps) {
         )}
       </AnimatePresence>
       <ActivityFeed entries={log} onSelect={pickNode} onHighlight={setHighlight} />
+      <FlowLegend rates={flowRates} shown={flows} onToggle={toggleFlow} />
       <CanvasControls
         following={following}
         labels={labels}

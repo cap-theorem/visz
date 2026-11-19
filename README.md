@@ -8,6 +8,10 @@ and draws the overlay as it changes:
 - **Crashes:** nodes the collector presumes dead (orphaned) turn red and fade
   until the collector drops them.
 - **Leaves:** nodes that leave fade away.
+- **Messages:** each message a node sends runs from sender to receiver as a
+  coloured comet (bright head, fading tail), so you can see who sent it to
+  whom. The legend at the bottom right shows each kind's rate and turns it on
+  or off.
 
 A side panel tracks nodes, links, degree, components and the spectral gap λ₂,
 with its recent history.
@@ -40,6 +44,7 @@ Controls:
 | `F` | fits the graph again |
 | `+` / `−` | zooms in and out |
 | `L` | labels every node |
+| `M` | shows or hides messages |
 | `?` | lists the shortcuts |
 
 Once you pan or zoom, the camera stops following the graph; Re-center or `F`
@@ -81,7 +86,7 @@ from secure pages.
 | file | does |
 |---|---|
 | `src/collector.ts` | the collector's API types; builds the graph from a snapshot and applies deltas |
-| `src/live.ts` | follows `GET /v1/graph/stream` (one snapshot, then one delta per change), resyncs when a delta is missed, reconnects with backoff, and polls `/v1/summary` |
+| `src/live.ts` | follows `GET /v1/graph/stream` (one snapshot, then one delta per change), resyncs when a delta is missed, reconnects with backoff, and polls `/v1/summary`; also follows `GET /v1/flows/stream` for messages |
 | `src/scene.ts` | the d3-force layout, the canvas drawing and its animations, and the camera (follows the graph until you pan or zoom) |
 | `src/components/` | the canvas and the panels: top bar, metrics, inspector, activity, view controls, ⌘K menu; React reads `live.ts` with `useSyncExternalStore` |
 
@@ -99,3 +104,20 @@ for the command menu, [lucide](https://lucide.dev) icons and the Geist typefaces
 | red | orphaned |
 
 **Links:** a link is drawn only if both of its ends report it, which is the collector's rule.
+
+**Messages:** each node counts what it sends per peer and kind, and posts the
+counts to the collector every 250 ms; the collector fans them out every 100 ms.
+A comet is drawn per (sender, receiver, kind) in each batch, spread over the
+250 ms, and gets thicker as the count grows. A comet can cross between nodes
+with no link, for example a probe or anti-entropy to a random member. With a
+node selected, only its own messages stay bright.
+
+| colour | messages |
+|---|---|
+| purple | links: `link`, `link_ack`, `unlink` |
+| yellow | gossip: `update`, `ae_digest`, `ae_heads`, `ae_want` |
+| cyan | probes: `ping`, `pong`, `ping_req`, `ping_req_ack` |
+| green | heartbeats; off by default, since every link sends one each way every 500 ms |
+
+The legend shows up once the collector sends its first message, so an older
+collector without `/v1/flows/stream` shows no legend.

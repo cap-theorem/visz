@@ -106,3 +106,39 @@ function adjacency(edges: Map<string, [string, string]>) {
 }
 
 export const apiUrl = (base: string, path: string) => base.replace(/\/+$/, '') + path
+
+/** One sender's messages of one kind to one peer, counted over the sender's last 250 ms. */
+export interface FlowEvent {
+  from: string
+  to: string
+  kind: string
+  count: number
+}
+
+/** What GET /v1/flows/stream sends about every 100 ms while messages flow. */
+export interface FlowBatch {
+  at: string
+  flows: FlowEvent[]
+}
+
+export type FlowFamily = 'heartbeat' | 'overlay' | 'gossip' | 'probe'
+
+export const FLOW_FAMILIES: FlowFamily[] = ['overlay', 'gossip', 'probe', 'heartbeat']
+
+export function familyOf(kind: string): FlowFamily {
+  switch (kind) {
+    case 'heartbeat':
+      return 'heartbeat'
+    case 'link':
+    case 'link_ack':
+    case 'unlink':
+      return 'overlay'
+    case 'update':
+    case 'ae_digest':
+    case 'ae_heads':
+    case 'ae_want':
+      return 'gossip'
+    default:
+      return 'probe'
+  }
+}
