@@ -15,6 +15,11 @@ and draws the overlay as it changes:
   whom. The legend at the bottom right shows each kind's rate and turns it on
   or off.
 
+Nodes are labelled with the service their spctrld has registered, or a short
+node id if none. Zoomed in further, the service instance's own id (such as
+`ord-9869`, whatever the service sent as `instance_id` when it registered)
+shows above each node. Small graphs, or `L`, label every node at any zoom.
+
 A side panel tracks nodes, links, degree, components and the spectral gap λ₂,
 with its recent history.
 
@@ -39,7 +44,7 @@ Controls:
 | input | does |
 |---|---|
 | click a node | opens it in the inspector, with its neighbours |
-| ⌘K or `/` | searches nodes by id or address, and runs actions |
+| ⌘K or `/` | searches nodes by service, instance, id or address, and runs actions |
 | scroll | pans; pinch or ⌘-scroll zooms |
 | drag | pans, or moves a node |
 | double-click | zooms to a node, or fits the graph |

@@ -7,6 +7,10 @@ export type NodeState = 'active' | 'isolated' | 'orphaned'
 export interface CollectorNode {
   id: string
   address: string
+  /** The service its spctrld has registered; absent when none is. */
+  service?: string
+  /** The service instance's own id, such as ord-9869; absent when it sent none. */
+  instance?: string
   /** active, isolated (reports no links) or orphaned (presumed dead, kept until its reports expire). */
   state: NodeState
   /** 0 is the largest component; -1 if orphaned. */

@@ -54,6 +54,7 @@ export const css = (c: RGB) => `rgb(${c[0]}, ${c[1]}, ${c[2]})`
 const WHITE: RGB = [255, 255, 255]
 const GRAY: RGB = [161, 161, 161]
 const LABEL_FONT = '500 10px "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace'
+const INSTANCE_FONT = '500 9px "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace'
 
 const JOIN_MS = 3000 // a new node glows blue this long
 const POP_MS = 650
@@ -68,6 +69,8 @@ const LINK_DISTANCE = 32
 const PAD = 96 // screen pixels kept around the graph, less on small screens
 const COLLIDE_UP_TO = 1500 // past this many nodes, collisions cost too much per frame
 const AUTO_LABELS_UP_TO = 30
+const LABEL_ZOOM = 1.2 // zoomed in this far, every node is labelled
+const INSTANCE_ZOOM = 2.8 // and this far (about 90 px between linked nodes), labelled nodes show their instance id above
 const PULSE_MS = 700 // a message travels from sender to receiver this long
 const PULSE_SPREAD_MS = 250 // a node counts messages over 250 ms, so its batch is spread back out over that
 const PULSE_TAIL = 0.35 // of the line, behind the head
@@ -79,6 +82,9 @@ const MAX_ZOOM = 8
 export interface SceneNode extends SimulationNodeDatum {
   id: string
   address: string
+  /** Empty when no service is registered. */
+  service: string
+  instance: string
   state: NodeState
   component: number
   degree: number
@@ -186,6 +192,8 @@ export class Scene {
         restyled = true
       }
       v.address = n.address
+      v.service = n.service ?? ''
+      v.instance = n.instance ?? ''
       v.state = n.state
       v.component = n.component
     }
@@ -443,9 +451,9 @@ export class Scene {
 
     this.drawPulses(ctx, now, selected)
 
-    ctx.font = LABEL_FONT
     ctx.textAlign = 'center'
-    const autoLabels = this.allLabels || this.nodes.size <= AUTO_LABELS_UP_TO
+    const autoLabels = this.allLabels || this.nodes.size <= AUTO_LABELS_UP_TO || this.cam.k >= LABEL_ZOOM
+    const instances = this.cam.k >= INSTANCE_ZOOM
     for (const v of this.nodes.values()) {
       const x = sx(v.x)
       const y = sy(v.y)
@@ -483,8 +491,15 @@ export class Scene {
       }
       const label = v === selected || v === hover || (selected ? near.has(v) : autoLabels)
       if (label && !v.gone) {
-        ctx.fillStyle = rgba(v === selected || v === hover ? WHITE : GRAY, 0.85 * a)
-        ctx.fillText(v.id.slice(0, 6), x, y + r + 14)
+        const focused = v === selected || v === hover
+        ctx.font = LABEL_FONT
+        ctx.fillStyle = rgba(focused ? WHITE : GRAY, 0.85 * a)
+        ctx.fillText(v.service || v.id.slice(0, 6), x, y + r + 14)
+        if (v.instance && (instances || focused)) {
+          ctx.font = INSTANCE_FONT
+          ctx.fillStyle = rgba(focused ? WHITE : GRAY, 0.6 * a)
+          ctx.fillText(v.instance, x, y - r - 7)
+        }
       }
     }
 
@@ -586,6 +601,8 @@ export class Scene {
     return {
       id: n.id,
       address: n.address,
+      service: n.service ?? '',
+      instance: n.instance ?? '',
       state: n.state,
       component: n.component,
       degree,

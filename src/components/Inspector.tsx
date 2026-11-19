@@ -51,6 +51,19 @@ export function Inspector({ graph, node, onSelect, onHighlight, onFocus, onClose
         </div>
         <dl className="props">
           <div>
+            <dt>Service</dt>
+            <dd>{node.service ?? <span className="faint">None registered</span>}</dd>
+          </div>
+          {node.instance && (
+            <div>
+              <dt>Instance</dt>
+              <dd>
+                <span className="mono">{node.instance}</span>
+                <CopyButton value={node.instance} label="instance" />
+              </dd>
+            </div>
+          )}
+          <div>
             <dt>Address</dt>
             <dd>
               <span className="mono">{node.address}</span>
@@ -76,8 +89,8 @@ export function Inspector({ graph, node, onSelect, onHighlight, onFocus, onClose
             <li key={n.id}>
               <button type="button" onPointerEnter={() => onHighlight(n.id)} onClick={() => onSelect(n.id)}>
                 <StateDot state={n.state} component={n.component} />
-                <span className="mono">{n.id.slice(0, 8)}</span>
-                <span className="mono faint grow">{n.address}</span>
+                <span className="mono">{n.instance ?? n.id.slice(0, 8)}</span>
+                <span className="faint grow">{n.service ?? n.address}</span>
                 <span className="mono faint">{degree(n.id)}</span>
               </button>
             </li>
