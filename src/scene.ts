@@ -62,7 +62,7 @@ const FLASH_MS = 900 // a new link flashes
 const BLEND_MS = 600 // colour change after a state change
 const EDGE_FADE_MS = 700
 const GONE_MS = 1200 // a node that left shrinks and fades
-const ORPHAN_DIM_MS = 20_000
+const ORPHAN_HIDE_MS = 4000 // an orphan shows red this long, then fades; the collector keeps it for ~90 s
 const TICK_MS = 1000 / 60
 const LINK_DISTANCE = 32
 const PAD = 96 // screen pixels kept around the graph, less on small screens
@@ -143,6 +143,7 @@ export class Scene {
   private allLabels = false
   private pulses: Pulse[] = []
   private families = new Set<FlowFamily>()
+  private listed = new Set<string>()
 
   constructor() {
     this.links = forceLink<SceneNode, SceneEdge>().distance(LINK_DISTANCE)
@@ -173,7 +174,7 @@ export class Scene {
         if (!first) events.push({ kind: 'join', id: n.id, text: `joined from ${n.address}` })
         continue
       }
-      if (v.gone) {
+      if (v.gone && !(v.state === 'orphaned' && n.state === 'orphaned')) {
         v.gone = 0
         moved = true
       }
@@ -188,6 +189,7 @@ export class Scene {
       v.state = n.state
       v.component = n.component
     }
+    this.listed = new Set(g.nodes.keys())
     for (const v of this.nodes.values()) {
       if (v.gone || g.nodes.has(v.id)) continue
       v.gone = now
@@ -222,15 +224,19 @@ export class Scene {
     this.parts = parts
 
     if (moved || restyled) {
-      // Setting the nodes again also re-reads each node's pull and collision size.
-      const live = [...this.nodes.values()].filter((v) => !v.gone)
-      this.sim.force('collide', live.length <= COLLIDE_UP_TO ? this.collide : null)
-      this.sim.nodes(live)
-      this.links.links([...this.edges.values()].filter((e) => !e.gone && !e.source.gone && !e.target.gone))
-      this.sim.alpha(Math.max(this.sim.alpha(), first ? 1 : moved ? 0.25 : 0.1))
+      this.relayout(first ? 1 : moved ? 0.25 : 0.1)
       if (first) this.sim.tick(Math.round(clamp(60_000 / Math.max(g.nodes.size, 1), 20, 300)))
     }
     return events
+  }
+
+  /** Hands the simulation the nodes and links still drawn; this also re-reads each node's pull and collision size. */
+  private relayout(alpha: number) {
+    const live = [...this.nodes.values()].filter((v) => !v.gone)
+    this.sim.force('collide', live.length <= COLLIDE_UP_TO ? this.collide : null)
+    this.sim.nodes(live)
+    this.links.links([...this.edges.values()].filter((e) => !e.gone && !e.source.gone && !e.target.gone))
+    this.sim.alpha(Math.max(this.sim.alpha(), alpha))
   }
 
   /** Advances the layout and camera to time now (performance.now()). */
@@ -250,7 +256,18 @@ export class Scene {
     }
     const ease = 1 - Math.exp(-dt / 400)
     for (const v of this.nodes.values()) v.size += (v.degree - v.size) * ease
-    for (const [id, v] of this.nodes) if (v.gone && now - v.gone > GONE_MS) this.nodes.delete(id)
+    // An orphan fades out long before the collector drops it; it stays here, hidden, until then.
+    let hid = false
+    for (const v of this.nodes.values()) {
+      if (v.state === 'orphaned' && !v.gone && now - v.changed > ORPHAN_HIDE_MS) {
+        v.gone = now
+        hid = true
+      }
+    }
+    if (hid) this.relayout(0.1)
+    for (const [id, v] of this.nodes) {
+      if (v.gone && now - v.gone > GONE_MS && !(v.state === 'orphaned' && this.listed.has(id))) this.nodes.delete(id)
+    }
     for (const [key, e] of this.edges) if (e.gone && now - e.gone > EDGE_FADE_MS) this.edges.delete(key)
     if (this.pulses.length) this.pulses = this.pulses.filter((p) => now - p.start < PULSE_MS + ARRIVE_MS)
     this.moveCamera(dt)
@@ -440,7 +457,6 @@ export class Scene {
 
       const lit = v === selected || v === hover || near.has(v) || hoverNear.has(v)
       let a = v.gone ? size : 1
-      if (v.state === 'orphaned') a *= 1 - 0.6 * clamp((now - v.changed) / ORPHAN_DIM_MS, 0, 1)
       if (selected && !lit) a *= 0.25
       const c = colorOf(v, now)
 

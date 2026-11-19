@@ -5,8 +5,10 @@ A live view of a spectral overlay. visz follows the topology collector
 and draws the overlay as it changes:
 
 - **Joins:** nodes pop in blue and their new links flash.
-- **Crashes:** nodes the collector presumes dead (orphaned) turn red and fade
-  until the collector drops them.
+- **Crashes:** nodes the collector presumes dead (orphaned) flash red, then
+  fade out after 4 seconds. The collector keeps them for its `--stale-after`
+  (90 s by default) and still counts them as orphaned; if one comes back, it
+  reappears.
 - **Leaves:** nodes that leave fade away.
 - **Messages:** each message a node sends runs from sender to receiver as a
   coloured comet (bright head, fading tail), so you can see who sent it to
@@ -58,7 +60,7 @@ checkout, then runs them on loopback:
 ```bash
 scripts/dev-cluster.sh up 12    # the collector on :8100 and 12 nodes, one per second
 scripts/dev-cluster.sh add 5    # five more joins
-scripts/dev-cluster.sh kill 2   # SIGKILL: orphaned within seconds, dropped after the collector's --stale-after (90 s)
+scripts/dev-cluster.sh kill 2   # SIGKILL: orphaned within seconds, gone from the view 4 s later
 scripts/dev-cluster.sh stop 1   # SIGTERM: the node reports that it left and fades out
 scripts/dev-cluster.sh down
 ```
